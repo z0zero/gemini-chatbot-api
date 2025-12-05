@@ -10,15 +10,87 @@ const conversation = [];
 const API_URL = '/api/chat';
 
 /**
+ * Parses markdown text and converts to HTML
+ * Supports: **bold**, *italic*, `code`, ### headings, bullet points, and line breaks
+ * @param {string} text - Markdown text
+ * @returns {string} - HTML string
+ */
+function parseMarkdown(text) {
+  if (!text) return '';
+
+  // First, escape HTML to prevent XSS
+  let result = text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+
+  // Process bullet points before other conversions
+  // Match lines starting with * followed by space (but not **)
+  const lines = result.split('\n');
+  const processedLines = [];
+  let inList = false;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    // Check if line starts with "* " but not "**" (bullet point)
+    if (/^\* (?!\*)/.test(line)) {
+      if (!inList) {
+        processedLines.push('<ul>');
+        inList = true;
+      }
+      // Remove the "* " and wrap in li
+      processedLines.push('<li>' + line.substring(2) + '</li>');
+    } else {
+      if (inList) {
+        processedLines.push('</ul>');
+        inList = false;
+      }
+      processedLines.push(line);
+    }
+  }
+
+  // Close list if still open
+  if (inList) {
+    processedLines.push('</ul>');
+  }
+
+  result = processedLines.join('\n');
+
+  return result
+    // Headers (### text)
+    .replace(/^### (.+)$/gm, '<h3>$1</h3>')
+    .replace(/^## (.+)$/gm, '<h2>$1</h2>')
+    .replace(/^# (.+)$/gm, '<h1>$1</h1>')
+    // Bold (**text** or __text__) - must be before italic
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/__(.+?)__/g, '<strong>$1</strong>')
+    // Italic (*text* or _text_) - only for inline, not bullet points
+    .replace(/\*([^\s*][^*]*[^\s*])\*/g, '<em>$1</em>')
+    .replace(/\*([^\s*])\*/g, '<em>$1</em>')
+    .replace(/_(.+?)_/g, '<em>$1</em>')
+    // Inline code (`code`)
+    .replace(/`(.+?)`/g, '<code>$1</code>')
+    // Line breaks (but not inside lists)
+    .replace(/\n/g, '<br>');
+}
+
+/**
  * Appends a message to the chat box
  * @param {string} sender - 'user' or 'bot'
  * @param {string} text - Message content
+ * @param {boolean} isHtml - Whether to render as HTML (for bot messages)
  * @returns {HTMLElement} - The created message element
  */
-function appendMessage(sender, text) {
+function appendMessage(sender, text, isHtml = false) {
   const msg = document.createElement('div');
   msg.classList.add('message', sender);
-  msg.textContent = text;
+
+  if (isHtml && sender === 'bot') {
+    msg.innerHTML = parseMarkdown(text);
+  } else {
+    msg.textContent = text;
+  }
+
   chatBox.appendChild(msg);
   chatBox.scrollTop = chatBox.scrollHeight;
   return msg;
@@ -75,8 +147,8 @@ async function handleSubmit(e) {
     // Send request to API
     const aiResponse = await sendMessageToAPI(conversation);
 
-    // Replace thinking message with AI response
-    thinkingMsg.textContent = aiResponse;
+    // Replace thinking message with AI response (rendered as HTML)
+    thinkingMsg.innerHTML = parseMarkdown(aiResponse);
 
     // Add AI response to conversation history
     conversation.push({ role: 'model', content: aiResponse });
